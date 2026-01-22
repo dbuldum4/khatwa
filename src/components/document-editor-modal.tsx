@@ -117,7 +117,7 @@ export function DocumentEditorModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
       {/* Backdrop */}
       <div
-        onClick={handleClose}
+        onClick={() => handleClose()}
         style={{
           position: "absolute",
           inset: 0,
@@ -200,7 +200,7 @@ export function DocumentEditorModal({
             )}
             <button
               type="button"
-              onClick={handleClose}
+              onClick={() => handleClose()}
               className="shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               aria-label="Close"
             >
@@ -225,7 +225,7 @@ export function DocumentEditorModal({
           <div className="text-xs text-muted-foreground">
             Auto-saved
           </div>
-          <Button type="button" variant="secondary" onClick={handleClose}>
+          <Button type="button" variant="secondary" onClick={() => handleClose()}>
             Done
           </Button>
         </div>
