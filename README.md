@@ -1,4 +1,4 @@
-# Khatwa (Focus List)
+# Khatwa
 
 A modern, dark-mode task management application built with Next.js 16, React 19, and Tailwind CSS 4. Features list, kanban, and documents views, drag-and-drop, sub-tasks, rich-text documents with slash commands, and persistent local storage.
 
