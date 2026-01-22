@@ -28,6 +28,8 @@ export function DocumentEditorModal({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipFlushRef = useRef(false);
   const onSaveRef = useRef(onSave);
   
   // Keep onSave ref updated to avoid dependency issues
@@ -35,12 +37,25 @@ export function DocumentEditorModal({
     onSaveRef.current = onSave;
   }, [onSave]);
 
-  const handleClose = useCallback(() => {
+  const flushPendingSave = useCallback(() => {
+    if (!hasChanges) return;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    onSaveRef.current({ title: title.trim() || "Untitled", content });
+  }, [content, hasChanges, title]);
+
+  const handleClose = useCallback((options?: { skipSave?: boolean }) => {
+    if (!options?.skipSave) {
+      flushPendingSave();
+    }
+    skipFlushRef.current = true;
     setIsOpen(false);
     closeTimeoutRef.current = setTimeout(() => {
       onClose();
     }, 180);
-  }, [onClose]);
+  }, [flushPendingSave, onClose]);
 
   // Animate in on mount
   useEffect(() => {
@@ -49,8 +64,11 @@ export function DocumentEditorModal({
       if (closeTimeoutRef.current) {
         clearTimeout(closeTimeoutRef.current);
       }
+      if (!skipFlushRef.current) {
+        flushPendingSave();
+      }
     };
-  }, []);
+  }, [flushPendingSave]);
 
   // Handle Escape key
   useEffect(() => {
@@ -73,16 +91,26 @@ export function DocumentEditorModal({
   useEffect(() => {
     if (!hasChanges) return;
     
-    const timeout = setTimeout(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
       onSaveRef.current({ title: title.trim() || "Untitled", content });
     }, 500);
 
-    return () => clearTimeout(timeout);
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
   }, [title, content, hasChanges]);
 
   const handleDelete = () => {
     onDelete();
-    handleClose();
+    skipFlushRef.current = true;
+    handleClose({ skipSave: true });
   };
 
   return (
