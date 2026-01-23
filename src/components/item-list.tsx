@@ -347,7 +347,11 @@ export function ItemList() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingDocumentFromTask, setEditingDocumentFromTask] = useState<DocumentRecord | null>(null);
   const draggingItemRef = useRef<string | null>(null);
+  const draggingSubTaskRef = useRef<string | null>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [draggingSubTaskId, setDraggingSubTaskId] = useState<string | null>(null);
+  const [subTaskDropTargetId, setSubTaskDropTargetId] = useState<string | null>(null);
+  const [subTaskDropPosition, setSubTaskDropPosition] = useState<"above" | "below" | null>(null);
 
   useEffect(() => {
     return () => {
@@ -359,6 +363,10 @@ export function ItemList() {
 
   const closeEditor = useCallback(() => {
     setIsEditorOpen(false);
+    draggingSubTaskRef.current = null;
+    setDraggingSubTaskId(null);
+    setSubTaskDropTargetId(null);
+    setSubTaskDropPosition(null);
     if (closeTimeoutRef.current) {
       clearTimeout(closeTimeoutRef.current);
     }
@@ -402,10 +410,6 @@ export function ItemList() {
     [items, editingItemId],
   );
   const currentSubTasks = editingItem?.subTasks ?? EMPTY_SUBTASKS;
-  const sortedCurrentSubTasks = useMemo(
-    () => sortSubTasks(currentSubTasks),
-    [currentSubTasks],
-  );
   const editingItemDocuments = useMemo(() => {
     if (!editingItemId) return EMPTY_DOCUMENTS;
     return documents.filter((doc) => doc.taskId === editingItemId);
@@ -567,6 +571,132 @@ export function ItemList() {
       )
     );
   }, [editingItemId, setItems]);
+
+  const handleSubTaskDragStart = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, subTaskId: string) => {
+      if (!editingItemId) return;
+      draggingSubTaskRef.current = subTaskId;
+      setDraggingSubTaskId(subTaskId);
+      event.dataTransfer.setData("text/plain", subTaskId);
+      event.dataTransfer.effectAllowed = "move";
+    },
+    [editingItemId],
+  );
+
+  const handleSubTaskDragEnd = useCallback(() => {
+    draggingSubTaskRef.current = null;
+    setDraggingSubTaskId(null);
+    setSubTaskDropTargetId(null);
+    setSubTaskDropPosition(null);
+  }, []);
+
+  const handleSubTaskDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, subTaskId: string) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const rect = event.currentTarget.getBoundingClientRect();
+      const nextPosition = event.clientY > rect.top + rect.height / 2 ? "below" : "above";
+      if (subTaskDropTargetId !== subTaskId) {
+        setSubTaskDropTargetId(subTaskId);
+      }
+      if (subTaskDropPosition !== nextPosition) {
+        setSubTaskDropPosition(nextPosition);
+      }
+    },
+    [subTaskDropPosition, subTaskDropTargetId],
+  );
+
+  const handleSubTaskDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, targetSubTaskId: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const draggedId = draggingSubTaskRef.current ?? event.dataTransfer.getData("text/plain");
+      if (!draggedId || !editingItemId) {
+        handleSubTaskDragEnd();
+        return;
+      }
+
+      if (draggedId === targetSubTaskId) {
+        handleSubTaskDragEnd();
+        return;
+      }
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const shouldPlaceAfter = event.clientY > rect.top + rect.height / 2;
+
+      setItems((prevItems) =>
+        prevItems.map((item) => {
+          if (item.id !== editingItemId) return item;
+
+          const subTasks = item.subTasks;
+          const fromIndex = subTasks.findIndex((st) => st.id === draggedId);
+          const toIndex = subTasks.findIndex((st) => st.id === targetSubTaskId);
+          if (fromIndex === -1 || toIndex === -1) return item;
+          if (fromIndex === toIndex) return item;
+
+          const nextSubTasks = [...subTasks];
+          const [moved] = nextSubTasks.splice(fromIndex, 1);
+          let insertIndex = toIndex;
+
+          if (fromIndex < toIndex) {
+            insertIndex = toIndex - 1;
+          }
+
+          if (shouldPlaceAfter) {
+            insertIndex += 1;
+          }
+
+          if (insertIndex < 0) insertIndex = 0;
+          if (insertIndex > nextSubTasks.length) insertIndex = nextSubTasks.length;
+
+          nextSubTasks.splice(insertIndex, 0, moved);
+          return { ...item, subTasks: nextSubTasks };
+        })
+      );
+      handleSubTaskDragEnd();
+    },
+    [editingItemId, handleSubTaskDragEnd, setItems],
+  );
+
+  const handleSubTaskListDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (subTaskDropTargetId !== null) {
+      setSubTaskDropTargetId(null);
+      setSubTaskDropPosition(null);
+    }
+  }, [subTaskDropTargetId]);
+
+  const handleSubTaskListDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const draggedId = draggingSubTaskRef.current ?? event.dataTransfer.getData("text/plain");
+      if (!draggedId || !editingItemId) {
+        handleSubTaskDragEnd();
+        return;
+      }
+
+      setItems((prevItems) =>
+        prevItems.map((item) => {
+          if (item.id !== editingItemId) return item;
+
+          const subTasks = item.subTasks;
+          const fromIndex = subTasks.findIndex((st) => st.id === draggedId);
+          if (fromIndex === -1 || fromIndex === subTasks.length - 1) return item;
+
+          const nextSubTasks = [...subTasks];
+          const [moved] = nextSubTasks.splice(fromIndex, 1);
+          nextSubTasks.push(moved);
+          return { ...item, subTasks: nextSubTasks };
+        })
+      );
+      handleSubTaskDragEnd();
+    },
+    [editingItemId, handleSubTaskDragEnd, setItems],
+  );
 
   const handleOpenItem = useCallback((item: Item) => {
     if (draggingItemRef.current) return;
@@ -807,43 +937,68 @@ export function ItemList() {
 
                     {/* Sub-task list */}
                     {currentSubTasks.length > 0 && (
-                      <div className="space-y-2">
-                        {sortedCurrentSubTasks.map((subTask) => (
-                          <div
-                            key={subTask.id}
-                            className="group flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleSubTask(subTask.id)}
-                              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-                              aria-label={subTask.completed ? "Mark as incomplete" : "Mark as complete"}
+                      <div
+                        className="space-y-2"
+                        onDragOver={handleSubTaskListDragOver}
+                        onDrop={handleSubTaskListDrop}
+                      >
+                        {currentSubTasks.map((subTask) => {
+                          const isDragging = draggingSubTaskId === subTask.id;
+                          const isDropTarget = subTaskDropTargetId === subTask.id;
+                          const dropPosition = isDropTarget ? subTaskDropPosition : null;
+
+                          return (
+                            <div
+                              key={subTask.id}
+                              draggable
+                              aria-grabbed={isDragging}
+                              onDragStart={(event) => handleSubTaskDragStart(event, subTask.id)}
+                              onDragEnd={handleSubTaskDragEnd}
+                              onDragOver={(event) => handleSubTaskDragOver(event, subTask.id)}
+                              onDrop={(event) => handleSubTaskDrop(event, subTask.id)}
+                              className={`group relative flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5 transition ${
+                                isDragging ? "opacity-60" : ""
+                              } cursor-grab active:cursor-grabbing`}
                             >
-                              {subTask.completed ? (
-                                <CheckCircle2 className="h-5 w-5 text-primary" />
-                              ) : (
-                                <Circle className="h-5 w-5" />
+                              {dropPosition && (
+                                <span
+                                  className={`pointer-events-none absolute left-2 right-2 ${
+                                    dropPosition === "above" ? "-top-px" : "-bottom-px"
+                                  } h-0.5 rounded-full bg-primary/70`}
+                                />
                               )}
-                            </button>
-                            <span
-                              className={`flex-1 text-base transition-all duration-150 ${
-                                subTask.completed
-                                  ? "text-muted-foreground line-through"
-                                  : "text-foreground"
-                              }`}
-                            >
-                              {subTask.label}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => removeSubTask(subTask.id)}
-                              className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
-                              aria-label={`Remove ${subTask.label}`}
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ))}
+                              <button
+                                type="button"
+                                onClick={() => toggleSubTask(subTask.id)}
+                                className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                                aria-label={subTask.completed ? "Mark as incomplete" : "Mark as complete"}
+                              >
+                                {subTask.completed ? (
+                                  <CheckCircle2 className="h-5 w-5 text-primary" />
+                                ) : (
+                                  <Circle className="h-5 w-5" />
+                                )}
+                              </button>
+                              <span
+                                className={`flex-1 text-base transition-all duration-150 ${
+                                  subTask.completed
+                                    ? "text-muted-foreground line-through"
+                                    : "text-foreground"
+                                }`}
+                              >
+                                {subTask.label}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => removeSubTask(subTask.id)}
+                                className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
+                                aria-label={`Remove ${subTask.label}`}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -943,35 +1098,60 @@ export function ItemList() {
                     </span>
 
                     {currentSubTasks.length > 0 ? (
-                      <div className="space-y-2">
-                        {sortedCurrentSubTasks.map((subTask) => (
-                          <div
-                            key={subTask.id}
-                            className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleSubTask(subTask.id)}
-                              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-                              aria-label={subTask.completed ? "Mark as incomplete" : "Mark as complete"}
+                      <div
+                        className="space-y-2"
+                        onDragOver={handleSubTaskListDragOver}
+                        onDrop={handleSubTaskListDrop}
+                      >
+                        {currentSubTasks.map((subTask) => {
+                          const isDragging = draggingSubTaskId === subTask.id;
+                          const isDropTarget = subTaskDropTargetId === subTask.id;
+                          const dropPosition = isDropTarget ? subTaskDropPosition : null;
+
+                          return (
+                            <div
+                              key={subTask.id}
+                              draggable
+                              aria-grabbed={isDragging}
+                              onDragStart={(event) => handleSubTaskDragStart(event, subTask.id)}
+                              onDragEnd={handleSubTaskDragEnd}
+                              onDragOver={(event) => handleSubTaskDragOver(event, subTask.id)}
+                              onDrop={(event) => handleSubTaskDrop(event, subTask.id)}
+                              className={`relative flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5 transition ${
+                                isDragging ? "opacity-60" : ""
+                              } cursor-grab active:cursor-grabbing`}
                             >
-                              {subTask.completed ? (
-                                <CheckCircle2 className="h-5 w-5 text-primary" />
-                              ) : (
-                                <Circle className="h-5 w-5" />
+                              {dropPosition && (
+                                <span
+                                  className={`pointer-events-none absolute left-2 right-2 ${
+                                    dropPosition === "above" ? "-top-px" : "-bottom-px"
+                                  } h-0.5 rounded-full bg-primary/70`}
+                                />
                               )}
-                            </button>
-                            <span
-                              className={`flex-1 text-base transition-all duration-150 ${
-                                subTask.completed
-                                  ? "text-muted-foreground line-through"
-                                  : "text-foreground"
-                              }`}
-                            >
-                              {subTask.label}
-                            </span>
-                          </div>
-                        ))}
+                              <button
+                                type="button"
+                                onClick={() => toggleSubTask(subTask.id)}
+                                className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                                aria-label={subTask.completed ? "Mark as incomplete" : "Mark as complete"}
+                              >
+                                {subTask.completed ? (
+                                  <CheckCircle2 className="h-5 w-5 text-primary" />
+                                ) : (
+                                  <Circle className="h-5 w-5" />
+                                )}
+                              </button>
+                              <span
+                                className={`flex-1 text-base transition-all duration-150 ${
+                                  subTask.completed
+                                    ? "text-muted-foreground line-through"
+                                    : "text-foreground"
+                                }`}
+                              >
+                                {subTask.label}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="text-base text-muted-foreground">
