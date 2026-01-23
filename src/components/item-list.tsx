@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, CheckCircle2, X, Plus, Link2, ExternalLink, Pencil, Loader2, FileText, List, Columns3, ArrowUp, ArrowDown } from "lucide-react";
+import { Circle, CheckCircle2, X, Plus, Link2, ExternalLink, Pencil, Loader2, FileText, List, Columns3 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,9 @@ const createItemId = () => {
   return `item-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const sortSubTasks = (subTasks: SubTask[]) =>
+  [...subTasks].sort((a, b) => Number(a.completed) - Number(b.completed));
+
 const EMPTY_SUBTASKS: SubTask[] = [];
 const EMPTY_DOCUMENTS: DocumentRecord[] = [];
 
@@ -56,7 +59,7 @@ const ListItemRow = memo(function ListItemRow({
   onOpen,
   onRemove,
 }: ListItemRowProps) {
-  const orderedSubTasks = useMemo(() => item.subTasks, [item.subTasks]);
+  const sortedSubTasks = useMemo(() => sortSubTasks(item.subTasks), [item.subTasks]);
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -93,7 +96,7 @@ const ListItemRow = memo(function ListItemRow({
         </div>
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-1">
-            {orderedSubTasks.map((subTask) => (
+            {sortedSubTasks.map((subTask) => (
               <div key={subTask.id} className="flex items-center gap-1.5">
                 {subTask.completed ? (
                   <CheckCircle2 className="h-3 w-3 shrink-0 text-primary/70" />
@@ -169,7 +172,7 @@ const ColumnItemCard = memo(function ColumnItemCard({
   onDragStart,
   onDragEnd,
 }: ColumnItemCardProps) {
-  const orderedSubTasks = useMemo(() => item.subTasks, [item.subTasks]);
+  const sortedSubTasks = useMemo(() => sortSubTasks(item.subTasks), [item.subTasks]);
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -215,7 +218,7 @@ const ColumnItemCard = memo(function ColumnItemCard({
         </div>
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-0.5">
-            {orderedSubTasks.map((subTask) => (
+            {sortedSubTasks.map((subTask) => (
               <div key={subTask.id} className="flex items-center gap-1">
                 {subTask.completed ? (
                   <CheckCircle2 className="h-2.5 w-2.5 shrink-0 text-primary/70" />
@@ -399,7 +402,10 @@ export function ItemList() {
     [items, editingItemId],
   );
   const currentSubTasks = editingItem?.subTasks ?? EMPTY_SUBTASKS;
-  const orderedCurrentSubTasks = useMemo(() => currentSubTasks, [currentSubTasks]);
+  const sortedCurrentSubTasks = useMemo(
+    () => sortSubTasks(currentSubTasks),
+    [currentSubTasks],
+  );
   const editingItemDocuments = useMemo(() => {
     if (!editingItemId) return EMPTY_DOCUMENTS;
     return documents.filter((doc) => doc.taskId === editingItemId);
@@ -559,28 +565,6 @@ export function ItemList() {
             }
           : item
       )
-    );
-  }, [editingItemId, setItems]);
-
-  const moveSubTask = useCallback((subTaskId: string, direction: "up" | "down") => {
-    if (!editingItemId) return;
-
-    setItems((prevItems) =>
-      prevItems.map((item) => {
-        if (item.id !== editingItemId) return item;
-
-        const index = item.subTasks.findIndex((subTask) => subTask.id === subTaskId);
-        if (index === -1) return item;
-
-        const nextIndex = direction === "up" ? index - 1 : index + 1;
-        if (nextIndex < 0 || nextIndex >= item.subTasks.length) return item;
-
-        const nextSubTasks = [...item.subTasks];
-        const [moved] = nextSubTasks.splice(index, 1);
-        nextSubTasks.splice(nextIndex, 0, moved);
-
-        return { ...item, subTasks: nextSubTasks };
-      })
     );
   }, [editingItemId, setItems]);
 
@@ -824,7 +808,7 @@ export function ItemList() {
                     {/* Sub-task list */}
                     {currentSubTasks.length > 0 && (
                       <div className="space-y-2">
-                        {orderedCurrentSubTasks.map((subTask, index) => (
+                        {sortedCurrentSubTasks.map((subTask) => (
                           <div
                             key={subTask.id}
                             className="group flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
@@ -850,34 +834,14 @@ export function ItemList() {
                             >
                               {subTask.label}
                             </span>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => moveSubTask(subTask.id, "up")}
-                                disabled={index === 0}
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                aria-label={`Move ${subTask.label} up`}
-                              >
-                                <ArrowUp className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveSubTask(subTask.id, "down")}
-                                disabled={index === orderedCurrentSubTasks.length - 1}
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                aria-label={`Move ${subTask.label} down`}
-                              >
-                                <ArrowDown className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeSubTask(subTask.id)}
-                                className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
-                                aria-label={`Remove ${subTask.label}`}
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeSubTask(subTask.id)}
+                              className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
+                              aria-label={`Remove ${subTask.label}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -980,7 +944,7 @@ export function ItemList() {
 
                     {currentSubTasks.length > 0 ? (
                       <div className="space-y-2">
-                        {orderedCurrentSubTasks.map((subTask, index) => (
+                        {sortedCurrentSubTasks.map((subTask) => (
                           <div
                             key={subTask.id}
                             className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
@@ -1006,26 +970,6 @@ export function ItemList() {
                             >
                               {subTask.label}
                             </span>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => moveSubTask(subTask.id, "up")}
-                                disabled={index === 0}
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                aria-label={`Move ${subTask.label} up`}
-                              >
-                                <ArrowUp className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveSubTask(subTask.id, "down")}
-                                disabled={index === orderedCurrentSubTasks.length - 1}
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                aria-label={`Move ${subTask.label} down`}
-                              >
-                                <ArrowDown className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
                           </div>
                         ))}
                       </div>
