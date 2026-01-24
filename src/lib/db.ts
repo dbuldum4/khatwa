@@ -11,6 +11,7 @@ export interface TaskRecord {
   id: string;
   label: string;
   link?: string;
+  dueDate?: string;
   subTasks: SubTask[];
 }
 

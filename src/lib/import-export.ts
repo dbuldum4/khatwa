@@ -128,6 +128,9 @@ export function validateImportData(data: unknown): ValidationResult {
     if (!Array.isArray(t.subTasks)) {
       return { valid: false, error: 'Task missing subTasks array' };
     }
+    if ('dueDate' in t && t.dueDate !== undefined && t.dueDate !== null && typeof t.dueDate !== 'string') {
+      return { valid: false, error: 'Task dueDate must be a string if provided' };
+    }
   }
 
   // Check documents array

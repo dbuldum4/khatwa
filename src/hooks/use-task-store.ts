@@ -10,7 +10,7 @@ import {
 } from "@/lib/db";
 
 type ColumnId = "column-1" | "column-2" | "column-3";
-type ViewMode = "list" | "columns" | "documents";
+type ViewMode = "list" | "columns" | "documents" | "calendar";
 
 interface UseTaskStoreReturn {
   // State

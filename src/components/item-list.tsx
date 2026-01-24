@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, CheckCircle2, X, Plus, Link2, ExternalLink, Pencil, Loader2, FileText, List, Columns3 } from "lucide-react";
+import { Circle, CheckCircle2, X, Plus, Link2, ExternalLink, Pencil, Loader2, FileText, List, Columns3, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,7 @@ type Item = {
   id: string;
   label: string;
   link?: string;
+  dueDate?: string;
   subTasks: SubTask[];
 };
 
@@ -44,6 +45,25 @@ const createItemId = () => {
 
 const sortSubTasks = (subTasks: SubTask[]) =>
   [...subTasks].sort((a, b) => Number(a.completed) - Number(b.completed));
+
+const parseLocalDate = (value: string): Date | null => {
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+};
+
+const formatDueDate = (value: string): string => {
+  const date = parseLocalDate(value);
+  if (!date) return value;
+  const now = new Date();
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+};
 
 const EMPTY_SUBTASKS: SubTask[] = [];
 const EMPTY_DOCUMENTS: DocumentRecord[] = [];
@@ -94,6 +114,12 @@ const ListItemRow = memo(function ListItemRow({
             </a>
           )}
         </div>
+        {item.dueDate && (
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Calendar className="h-3.5 w-3.5" />
+            <span>Due {formatDueDate(item.dueDate)}</span>
+          </div>
+        )}
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-1">
             {sortedSubTasks.map((subTask) => (
@@ -216,6 +242,12 @@ const ColumnItemCard = memo(function ColumnItemCard({
             </a>
           )}
         </div>
+        {item.dueDate && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            <span>Due {formatDueDate(item.dueDate)}</span>
+          </div>
+        )}
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-0.5">
             {sortedSubTasks.map((subTask) => (
@@ -318,6 +350,305 @@ const ColumnsView = memo(function ColumnsView({
   );
 });
 
+const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const getCalendarDays = (year: number, month: number) => {
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const daysInMonth = lastDay.getDate();
+  const startDayOfWeek = firstDay.getDay();
+
+  const days: { date: Date; isCurrentMonth: boolean }[] = [];
+
+  // Add days from previous month to fill the first week
+  const prevMonthLastDay = new Date(year, month, 0).getDate();
+  for (let i = startDayOfWeek - 1; i >= 0; i--) {
+    days.push({
+      date: new Date(year, month - 1, prevMonthLastDay - i),
+      isCurrentMonth: false,
+    });
+  }
+
+  // Add days of current month
+  for (let day = 1; day <= daysInMonth; day++) {
+    days.push({
+      date: new Date(year, month, day),
+      isCurrentMonth: true,
+    });
+  }
+
+  // Add days from next month to complete the grid (6 rows)
+  const remainingDays = 42 - days.length; // 6 rows * 7 days
+  for (let day = 1; day <= remainingDays; day++) {
+    days.push({
+      date: new Date(year, month + 1, day),
+      isCurrentMonth: false,
+    });
+  }
+
+  return days;
+};
+
+const formatDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const isSameDay = (date1: Date, date2: Date): boolean => {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+};
+
+interface CalendarViewProps {
+  items: Item[];
+  onOpenItem: (item: Item) => void;
+  onAssignDueDate: (itemId: string, dueDate: string) => void;
+}
+
+const CalendarView = memo(function CalendarView({
+  items,
+  onOpenItem,
+  onAssignDueDate,
+}: CalendarViewProps) {
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const today = useMemo(() => new Date(), []);
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  const calendarDays = useMemo(() => getCalendarDays(year, month), [year, month]);
+
+  const itemsByDate = useMemo(() => {
+    const map: Record<string, Item[]> = {};
+    for (const item of items) {
+      if (item.dueDate) {
+        if (!map[item.dueDate]) {
+          map[item.dueDate] = [];
+        }
+        map[item.dueDate].push(item);
+      }
+    }
+    return map;
+  }, [items]);
+
+  const tasksWithoutDueDate = useMemo(
+    () => items.filter((item) => !item.dueDate),
+    [items]
+  );
+
+  const goToPreviousMonth = useCallback(() => {
+    setCurrentDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  }, []);
+
+  const goToNextMonth = useCallback(() => {
+    setCurrentDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  }, []);
+
+  const goToToday = useCallback(() => {
+    setCurrentDate(new Date());
+  }, []);
+
+  const monthYearLabel = currentDate.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const handleTaskDragStart = useCallback(
+    (event: React.DragEvent<HTMLButtonElement>, itemId: string) => {
+      setDraggingTaskId(itemId);
+      event.dataTransfer.setData("text/plain", itemId);
+      event.dataTransfer.effectAllowed = "move";
+    },
+    [],
+  );
+
+  const handleTaskDragEnd = useCallback(() => {
+    setDraggingTaskId(null);
+    setDragOverDate(null);
+  }, []);
+
+  const handleDayDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, dateKey: string) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      if (!draggingTaskId) return;
+      if (dragOverDate !== dateKey) {
+        setDragOverDate(dateKey);
+      }
+    },
+    [dragOverDate, draggingTaskId],
+  );
+
+  const handleDayDragLeave = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, dateKey: string) => {
+      const nextTarget = event.relatedTarget as Node | null;
+      if (nextTarget && event.currentTarget.contains(nextTarget)) {
+        return;
+      }
+      if (dragOverDate === dateKey) {
+        setDragOverDate(null);
+      }
+    },
+    [dragOverDate],
+  );
+
+  const handleDayDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, dateKey: string) => {
+      event.preventDefault();
+      const itemId = event.dataTransfer.getData("text/plain");
+      if (!itemId) return;
+      const item = items.find((candidate) => candidate.id === itemId);
+      if (!item || item.dueDate) {
+        setDragOverDate(null);
+        setDraggingTaskId(null);
+        return;
+      }
+      onAssignDueDate(itemId, dateKey);
+      setDragOverDate(null);
+      setDraggingTaskId(null);
+    },
+    [items, onAssignDueDate],
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Header with navigation */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-foreground">{monthYearLabel}</h2>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={goToToday}
+            className="text-sm"
+          >
+            Today
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={goToPreviousMonth}
+            aria-label="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={goToNextMonth}
+            aria-label="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Calendar grid */}
+      <div className="rounded-lg border border-border/70 bg-card overflow-hidden">
+        {/* Day headers */}
+        <div className="grid grid-cols-7 border-b border-border/50">
+          {DAYS_OF_WEEK.map((day) => (
+            <div
+              key={day}
+              className="px-2 py-2 text-center text-sm font-medium text-muted-foreground"
+            >
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* Calendar days */}
+        <div className="grid grid-cols-7">
+          {calendarDays.map((dayInfo, index) => {
+            const dateKey = formatDateKey(dayInfo.date);
+            const dayItems = itemsByDate[dateKey] || [];
+            const isToday = isSameDay(dayInfo.date, today);
+            const dayNumber = dayInfo.date.getDate();
+            const isDropTarget = dragOverDate === dateKey;
+            const dayBackground = isDropTarget
+              ? "bg-primary/5 ring-2 ring-primary/40"
+              : !dayInfo.isCurrentMonth
+              ? "bg-muted/10"
+              : "bg-card";
+
+            return (
+              <div
+                key={index}
+                onDragOver={(event) => handleDayDragOver(event, dateKey)}
+                onDragLeave={(event) => handleDayDragLeave(event, dateKey)}
+                onDrop={(event) => handleDayDrop(event, dateKey)}
+                className={`min-h-[100px] border-b border-r border-border/30 p-1.5 transition-colors ${dayBackground} ${
+                  index % 7 === 6 ? "border-r-0" : ""
+                } ${index >= 35 ? "border-b-0" : ""}`}
+              >
+                <div
+                  className={`mb-1 flex h-6 w-6 items-center justify-center rounded-full text-sm ${
+                    isToday
+                      ? "bg-primary text-primary-foreground font-semibold"
+                      : dayInfo.isCurrentMonth
+                      ? "text-foreground"
+                      : "text-muted-foreground/50"
+                  }`}
+                >
+                  {dayNumber}
+                </div>
+                <div className="space-y-1 max-h-[72px] overflow-y-auto">
+                  {dayItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onOpenItem(item)}
+                      className="w-full truncate rounded px-1.5 py-0.5 text-left text-xs bg-primary/10 text-foreground hover:bg-primary/20 transition-colors"
+                      title={item.label}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Tasks without due date */}
+      {tasksWithoutDueDate.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            {tasksWithoutDueDate.length} task{tasksWithoutDueDate.length !== 1 ? "s" : ""} without a due date
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {tasksWithoutDueDate.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                draggable
+                onClick={() => onOpenItem(item)}
+                onDragStart={(event) => handleTaskDragStart(event, item.id)}
+                onDragEnd={handleTaskDragEnd}
+                className="truncate rounded-lg border border-border/50 bg-muted/20 px-3 py-1.5 text-sm text-foreground hover:bg-muted/40 transition-colors max-w-[200px] cursor-grab active:cursor-grabbing"
+                title={item.label}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
 export function ItemList() {
   const {
     items,
@@ -344,6 +675,7 @@ export function ItemList() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [subTaskInput, setSubTaskInput] = useState("");
   const [editingLink, setEditingLink] = useState("");
+  const [editingDueDate, setEditingDueDate] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingDocumentFromTask, setEditingDocumentFromTask] = useState<DocumentRecord | null>(null);
   const draggingItemRef = useRef<string | null>(null);
@@ -374,6 +706,7 @@ export function ItemList() {
       setEditingItemId(null);
       setEditingLabel("");
       setEditingLink("");
+      setEditingDueDate("");
       setSubTaskInput("");
       setIsEditMode(false);
       closeTimeoutRef.current = null;
@@ -394,6 +727,7 @@ export function ItemList() {
           if (item) {
             setEditingLabel(item.label);
             setEditingLink(item.link ?? "");
+            setEditingDueDate(item.dueDate ?? "");
           }
         } else {
           closeEditor();
@@ -474,6 +808,17 @@ export function ItemList() {
     });
   }, [setColumnById]);
 
+  const handleAssignDueDate = useCallback(
+    (itemId: string, dueDate: string) => {
+      setItems((prevItems) =>
+        prevItems.map((item) =>
+          item.id === itemId ? { ...item, dueDate } : item
+        )
+      );
+    },
+    [setItems],
+  );
+
   const openEditor = useCallback((item: Item) => {
     if (closeTimeoutRef.current) {
       clearTimeout(closeTimeoutRef.current);
@@ -482,6 +827,7 @@ export function ItemList() {
     setEditingItemId(item.id);
     setEditingLabel(item.label);
     setEditingLink(item.link ?? "");
+    setEditingDueDate(item.dueDate ?? "");
     setIsEditorOpen(false);
     requestAnimationFrame(() => setIsEditorOpen(true));
   }, []);
@@ -492,19 +838,23 @@ export function ItemList() {
     if (!nextLabel) return;
 
     const nextLink = editingLink.trim() || undefined;
+    const nextDueDate = editingDueDate.trim() || undefined;
     setItems((prevItems) =>
       prevItems.map((item) =>
-        item.id === editingItemId ? { ...item, label: nextLabel, link: nextLink } : item
+        item.id === editingItemId
+          ? { ...item, label: nextLabel, link: nextLink, dueDate: nextDueDate }
+          : item
       )
     );
     setIsEditMode(false);
-  }, [editingItemId, editingLabel, editingLink, setItems]);
+  }, [editingItemId, editingLabel, editingLink, editingDueDate, setItems]);
 
   const cancelEditMode = useCallback(() => {
     // Reset to original values and exit edit mode
     if (editingItem) {
       setEditingLabel(editingItem.label);
       setEditingLink(editingItem.link ?? "");
+      setEditingDueDate(editingItem.dueDate ?? "");
     }
     setIsEditMode(false);
   }, [editingItem]);
@@ -767,11 +1117,20 @@ export function ItemList() {
               <FileText className="mr-1.5 h-4 w-4" />
               Documents
             </Button>
+            <Button
+              type="button"
+              variant={viewMode === "calendar" ? "secondary" : "ghost"}
+              onClick={() => setViewMode("calendar")}
+              className="justify-start"
+            >
+              <Calendar className="mr-1.5 h-4 w-4" />
+              Calendar
+            </Button>
           </div>
         </aside>
 
         <div className="flex-1 space-y-4">
-          {viewMode !== "documents" && (
+          {viewMode !== "documents" && viewMode !== "calendar" && (
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 value={inputValue}
@@ -795,6 +1154,12 @@ export function ItemList() {
               onAddDocument={addDocument}
               onUpdateDocument={updateDocument}
               onDeleteDocument={deleteDocument}
+            />
+          ) : viewMode === "calendar" ? (
+            <CalendarView
+              items={items}
+              onOpenItem={handleOpenItem}
+              onAssignDueDate={handleAssignDueDate}
             />
           ) : viewMode === "list" ? (
             <ListView
@@ -922,6 +1287,44 @@ export function ItemList() {
                           onClick={() => setEditingLink("")}
                           className="absolute right-3 text-muted-foreground transition-colors hover:text-foreground"
                           aria-label="Clear link"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Due date section */}
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="edit-task-due-date"
+                      className="text-sm font-semibold uppercase tracking-wide text-muted-foreground"
+                    >
+                      Due date
+                    </label>
+                    <div className="relative flex items-center">
+                      <Calendar className="absolute left-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="edit-task-due-date"
+                        type="date"
+                        value={editingDueDate}
+                        onChange={(event) => setEditingDueDate(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            if (!isSaveDisabled) {
+                              saveEdit();
+                            }
+                          }
+                        }}
+                        className="pl-9 pr-9"
+                      />
+                      {editingDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingDueDate("")}
+                          className="absolute right-3 text-muted-foreground transition-colors hover:text-foreground"
+                          aria-label="Clear due date"
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -1087,6 +1490,23 @@ export function ItemList() {
                     ) : (
                       <p className="text-base text-muted-foreground">
                         No link yet.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Due date section */}
+                  <div className="space-y-2">
+                    <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                      Due date
+                    </span>
+                    {editingItem?.dueDate ? (
+                      <div className="flex items-center gap-2 text-base text-foreground">
+                        <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span>{formatDueDate(editingItem.dueDate)}</span>
+                      </div>
+                    ) : (
+                      <p className="text-base text-muted-foreground">
+                        No due date yet.
                       </p>
                     )}
                   </div>
