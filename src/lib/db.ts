@@ -7,11 +7,21 @@ export interface SubTask {
   completed: boolean;
 }
 
+export type CustomFieldType = "text" | "select";
+
+export interface CustomFieldDefinition {
+  id: string;
+  label: string;
+  type: CustomFieldType;
+  options?: string[];
+}
+
 export interface TaskRecord {
   id: string;
   label: string;
   link?: string;
   dueDate?: string;
+  customFields?: Record<string, string>;
   subTasks: SubTask[];
 }
 
@@ -105,12 +115,12 @@ export async function setSetting<T>(key: string, value: T): Promise<void> {
 export async function loadPersistedData(): Promise<{
   tasks: TaskRecord[];
   columnById: Record<string, string>;
-  viewMode: 'list' | 'columns' | 'documents';
+  viewMode: 'list' | 'columns' | 'documents' | 'calendar';
 }> {
   const [tasks, columnById, viewMode] = await Promise.all([
     getAllTasks(),
     getSetting<Record<string, string>>('columnById'),
-    getSetting<'list' | 'columns' | 'documents'>('viewMode'),
+    getSetting<'list' | 'columns' | 'documents' | 'calendar'>('viewMode'),
   ]);
 
   return {
@@ -124,7 +134,7 @@ export async function loadPersistedData(): Promise<{
 export async function saveAllData(data: {
   tasks: TaskRecord[];
   columnById: Record<string, string>;
-  viewMode: 'list' | 'columns' | 'documents';
+  viewMode: 'list' | 'columns' | 'documents' | 'calendar';
 }): Promise<void> {
   await Promise.all([
     saveTasks(data.tasks),

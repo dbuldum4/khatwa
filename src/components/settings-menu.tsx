@@ -1,8 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Settings, Download, Upload, X, Copy, Check, FileUp } from "lucide-react";
+import { Settings, Download, Upload, X, Copy, Check, FileUp, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   exportAllData,
   downloadExportFile,
@@ -10,13 +18,21 @@ import {
   parseImportFile,
   importAllData,
 } from "@/lib/import-export";
-import { setImportInProgress } from "@/lib/db";
+import { getSetting, setImportInProgress, setSetting, type CustomFieldDefinition, type CustomFieldType } from "@/lib/db";
 
 type DialogMode = "none" | "export" | "import" | "confirm-import";
 
 interface SettingsMenuProps {
   onDataImported?: () => void;
 }
+
+const createFieldId = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `field-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
 
 export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -27,24 +43,16 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
+  const [newFieldLabel, setNewFieldLabel] = useState("");
+  const [newFieldType, setNewFieldType] = useState<CustomFieldType>("text");
+  const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
+  const [newOptionInput, setNewOptionInput] = useState("");
+  const [customFieldError, setCustomFieldError] = useState<string | null>(null);
+  const [isSavingFields, setIsSavingFields] = useState(false);
 
-  const menuRef = useRef<HTMLDivElement>(null);
   const exportTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    if (!isOpen || dialogMode !== "none") return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOpen, dialogMode]);
 
   const handleCloseDialog = useCallback(() => {
     setDialogMode("none");
@@ -52,26 +60,48 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
     setImportText("");
     setImportPreview(null);
     setError(null);
-    setIsOpen(false);
   }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setIsOpen(false);
+    setDialogMode("none");
+    setExportData("");
+    setImportText("");
+    setImportPreview(null);
+    setError(null);
+    setCustomFieldError(null);
+  }, []);
+
+  const loadCustomFields = useCallback(async () => {
+    try {
+      const storedFields = await getSetting<CustomFieldDefinition[]>("customFields");
+      setCustomFields(storedFields ?? []);
+    } catch (err) {
+      console.error("Failed to load custom fields:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCustomFields();
+  }, [loadCustomFields]);
 
   // Close menu on Escape
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen && dialogMode === "none") return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (dialogMode !== "none") {
-          handleCloseDialog();
-        } else {
-          setIsOpen(false);
-        }
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (dialogMode !== "none") {
+        handleCloseDialog();
+      } else {
+        handleCloseSettings();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, dialogMode, handleCloseDialog]);
+  }, [isOpen, dialogMode, handleCloseDialog, handleCloseSettings]);
 
   // Reset copied state after delay
   useEffect(() => {
@@ -87,7 +117,6 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
       const jsonString = await exportAllData();
       setExportData(jsonString);
       setDialogMode("export");
-      setIsOpen(false);
     } catch (err) {
       setError("Failed to export data. Please try again.");
       console.error("Export error:", err);
@@ -114,7 +143,6 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
     setDialogMode("import");
     setImportText("");
     setError(null);
-    setIsOpen(false);
   }, []);
 
   const handleImportTextChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -141,6 +169,77 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
     } catch (err) {
       setError("Failed to read file. Please try again.");
       console.error("File read error:", err);
+    }
+  }, []);
+
+  const persistCustomFields = useCallback(async (nextFields: CustomFieldDefinition[]) => {
+    setIsSavingFields(true);
+    setCustomFieldError(null);
+    try {
+      await setSetting("customFields", nextFields);
+      setCustomFields(nextFields);
+      window.dispatchEvent(new CustomEvent("custom-fields-updated", { detail: nextFields }));
+    } catch (err) {
+      setCustomFieldError("Failed to save custom fields. Please try again.");
+      console.error("Custom fields save error:", err);
+    } finally {
+      setIsSavingFields(false);
+    }
+  }, []);
+
+  const handleAddOption = useCallback(() => {
+    const nextOption = newOptionInput.trim();
+    if (!nextOption) return;
+    if (newFieldOptions.includes(nextOption)) {
+      setCustomFieldError("That option already exists.");
+      return;
+    }
+    setNewFieldOptions((prev) => [...prev, nextOption]);
+    setNewOptionInput("");
+    setCustomFieldError(null);
+  }, [newFieldOptions, newOptionInput]);
+
+  const handleRemoveOption = useCallback((option: string) => {
+    setNewFieldOptions((prev) => prev.filter((value) => value !== option));
+  }, []);
+
+  const handleAddCustomField = useCallback(async () => {
+    const trimmedLabel = newFieldLabel.trim();
+    if (!trimmedLabel) {
+      setCustomFieldError("Field name is required.");
+      return;
+    }
+
+    if (newFieldType === "select" && newFieldOptions.length === 0) {
+      setCustomFieldError("Add at least one dropdown option.");
+      return;
+    }
+
+    const nextField: CustomFieldDefinition = {
+      id: createFieldId(),
+      label: trimmedLabel,
+      type: newFieldType,
+      options: newFieldType === "select" ? newFieldOptions : undefined,
+    };
+
+    await persistCustomFields([...customFields, nextField]);
+    setNewFieldLabel("");
+    setNewFieldType("text");
+    setNewFieldOptions([]);
+    setNewOptionInput("");
+  }, [customFields, newFieldLabel, newFieldOptions, newFieldType, persistCustomFields]);
+
+  const handleRemoveCustomField = useCallback(async (fieldId: string) => {
+    await persistCustomFields(customFields.filter((field) => field.id !== fieldId));
+  }, [customFields, persistCustomFields]);
+
+  const handleNewFieldTypeChange = useCallback((value: string) => {
+    const nextType = value as CustomFieldType;
+    setNewFieldType(nextType);
+    setCustomFieldError(null);
+    if (nextType === "text") {
+      setNewFieldOptions([]);
+      setNewOptionInput("");
     }
   }, []);
 
@@ -206,48 +305,241 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
 
   return (
     <>
-      <div ref={menuRef} className="relative">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsOpen(!isOpen)}
-          className="text-muted-foreground hover:text-foreground"
-          aria-label="Settings"
-          aria-expanded={isOpen}
-          aria-haspopup="menu"
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={() => {
+          setIsOpen(true);
+          setCustomFieldError(null);
+        }}
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="Settings"
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+      >
+        <Settings className="h-5 w-5" />
+      </Button>
 
-        {/* Dropdown Menu */}
-        {isOpen && dialogMode === "none" && (
+      {isOpen && dialogMode === "none" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
           <div
-            role="menu"
-            className="absolute right-0 top-full z-50 mt-2 w-48 rounded-lg border border-border/70 bg-card py-1 shadow-lg"
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={handleCloseSettings}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-dialog-title"
+            className="relative flex w-full max-w-3xl flex-col rounded-2xl border border-border/70 bg-card p-6 shadow-xl"
+            style={{ maxHeight: "85vh" }}
           >
             <button
               type="button"
-              role="menuitem"
-              onClick={handleExportClick}
-              disabled={isLoading}
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"
+              onClick={handleCloseSettings}
+              className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+              aria-label="Close"
             >
-              <Download className="h-4 w-4" />
-              {isLoading ? "Loading..." : "Export Data"}
+              <X className="h-5 w-5" />
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={handleImportClick}
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
+
+            <h2
+              id="settings-dialog-title"
+              className="text-lg font-semibold text-foreground"
             >
-              <Upload className="h-4 w-4" />
-              Import Data
-            </button>
+              Settings
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Customize your workflow and manage your data.
+            </p>
+
+            <div className="mt-6 flex-1 space-y-8 overflow-y-auto pr-1">
+              <section className="space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    Custom fields
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Add fields that appear on every task.
+                  </p>
+                </div>
+
+                <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Field name
+                      </label>
+                      <Input
+                        value={newFieldLabel}
+                        onChange={(event) => {
+                          setNewFieldLabel(event.target.value);
+                          setCustomFieldError(null);
+                        }}
+                        placeholder="e.g. Company"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Type
+                      </label>
+                      <Select value={newFieldType} onValueChange={handleNewFieldTypeChange}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Text</SelectItem>
+                          <SelectItem value="select">Dropdown</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {newFieldType === "select" && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Dropdown options
+                      </label>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Input
+                          value={newOptionInput}
+                          onChange={(event) => setNewOptionInput(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              handleAddOption();
+                            }
+                          }}
+                          placeholder="Add an option..."
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={handleAddOption}
+                          disabled={!newOptionInput.trim()}
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add option
+                        </Button>
+                      </div>
+                      {newFieldOptions.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {newFieldOptions.map((option) => (
+                            <div
+                              key={option}
+                              className="flex items-center gap-2 rounded-full border border-border/60 bg-background/50 px-3 py-1 text-sm text-foreground"
+                            >
+                              <span>{option}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOption(option)}
+                                className="text-muted-foreground hover:text-foreground"
+                                aria-label={`Remove ${option}`}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Add at least one option for a dropdown field.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {customFieldError && (
+                    <p className="text-sm text-destructive">{customFieldError}</p>
+                  )}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      onClick={handleAddCustomField}
+                      disabled={
+                        isSavingFields ||
+                        !newFieldLabel.trim() ||
+                        (newFieldType === "select" && newFieldOptions.length === 0)
+                      }
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      {isSavingFields ? "Saving..." : "Add field"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {customFields.length > 0 ? (
+                    customFields.map((field) => (
+                      <div
+                        key={field.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground">
+                            {field.label}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {field.type === "text"
+                              ? "Text"
+                              : `Dropdown • ${field.options?.join(", ") || "No options"}`}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveCustomField(field.id)}
+                          aria-label={`Remove ${field.label}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No custom fields yet.
+                    </p>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Removing a field deletes its values from all tasks.
+                </p>
+              </section>
+
+              <section className="space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    Data
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Export a backup or import data from a file.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    onClick={handleExportClick}
+                    disabled={isLoading}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    {isLoading ? "Loading..." : "Export Data"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleImportClick}
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Import Data
+                  </Button>
+                </div>
+              </section>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Export Dialog */}
       {dialogMode === "export" && (

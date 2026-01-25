@@ -9,7 +9,7 @@ import {
   type TaskRecord,
 } from "@/lib/db";
 
-type ColumnId = "column-1" | "column-2" | "column-3";
+type ColumnId = "column-1" | "column-2" | "column-3" | "column-4";
 type ViewMode = "list" | "columns" | "documents" | "calendar";
 
 interface UseTaskStoreReturn {

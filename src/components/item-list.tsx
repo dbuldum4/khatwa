@@ -5,16 +5,24 @@ import { Circle, CheckCircle2, X, Plus, Link2, ExternalLink, Pencil, Loader2, Fi
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTaskStore } from "@/hooks/use-task-store";
 import { useDocumentStore } from "@/hooks/use-document-store";
 import { DocumentsView } from "@/components/documents-view";
 import { DocumentEditorModal } from "@/components/document-editor-modal";
-import type { DocumentRecord } from "@/lib/db";
+import { getSetting, type CustomFieldDefinition, type DocumentRecord } from "@/lib/db";
 
 const COLUMNS = [
-  { id: "column-1", label: "Not started" },
-  { id: "column-2", label: "In progress" },
-  { id: "column-3", label: "Completed" },
+  { id: "column-1", label: "To apply" },
+  { id: "column-2", label: "Applied" },
+  { id: "column-3", label: "Interviewing" },
+  { id: "column-4", label: "Offer" },
 ] as const;
 
 type ColumnId = (typeof COLUMNS)[number]["id"];
@@ -30,6 +38,7 @@ type Item = {
   label: string;
   link?: string;
   dueDate?: string;
+  customFields?: Record<string, string>;
   subTasks: SubTask[];
 };
 
@@ -67,15 +76,89 @@ const formatDueDate = (value: string): string => {
 
 const EMPTY_SUBTASKS: SubTask[] = [];
 const EMPTY_DOCUMENTS: DocumentRecord[] = [];
+const EMPTY_SELECT_VALUE = "__khatwa_empty__";
+const MAX_CUSTOM_FIELDS_LIST = 3;
+const MAX_CUSTOM_FIELDS_KANBAN = 2;
+
+type CustomFieldSummaryEntry = {
+  id: string;
+  label: string;
+  value: string;
+};
+
+const getCustomFieldSummary = (
+  item: Item,
+  definitions: CustomFieldDefinition[],
+): CustomFieldSummaryEntry[] => {
+  if (!item.customFields || definitions.length === 0) return [];
+  return definitions.reduce<CustomFieldSummaryEntry[]>((acc, field) => {
+    const rawValue = item.customFields?.[field.id];
+    if (!rawValue) return acc;
+    const value = rawValue.trim();
+    if (!value) return acc;
+    acc.push({ id: field.id, label: field.label, value });
+    return acc;
+  }, []);
+};
+
+interface CustomFieldSummaryProps {
+  item: Item;
+  definitions: CustomFieldDefinition[];
+  maxVisible: number;
+  variant?: "list" | "kanban";
+}
+
+const CustomFieldSummary = memo(function CustomFieldSummary({
+  item,
+  definitions,
+  maxVisible,
+  variant = "list",
+}: CustomFieldSummaryProps) {
+  const summary = useMemo(
+    () => getCustomFieldSummary(item, definitions),
+    [definitions, item.customFields],
+  );
+
+  if (summary.length === 0) return null;
+
+  const visible = summary.slice(0, maxVisible);
+  const remaining = summary.length - visible.length;
+  const containerClass =
+    variant === "kanban"
+      ? "space-y-0.5 text-xs text-muted-foreground"
+      : "space-y-1 text-xs text-muted-foreground";
+  const remainingClass =
+    variant === "kanban"
+      ? "text-[11px] text-muted-foreground/60"
+      : "text-xs text-muted-foreground/60";
+
+  return (
+    <div className={containerClass}>
+      {visible.map((field) => (
+        <div key={field.id} className="flex min-w-0 items-baseline gap-1">
+          <span className="shrink-0 font-medium text-muted-foreground/70">
+            {field.label}:
+          </span>
+          <span className="min-w-0 flex-1 truncate text-foreground/80">
+            {field.value}
+          </span>
+        </div>
+      ))}
+      {remaining > 0 && <div className={remainingClass}>+{remaining} more</div>}
+    </div>
+  );
+});
 
 interface ListItemRowProps {
   item: Item;
+  customFieldDefinitions: CustomFieldDefinition[];
   onOpen: (item: Item) => void;
   onRemove: (id: string) => void;
 }
 
 const ListItemRow = memo(function ListItemRow({
   item,
+  customFieldDefinitions,
   onOpen,
   onRemove,
 }: ListItemRowProps) {
@@ -120,6 +203,12 @@ const ListItemRow = memo(function ListItemRow({
             <span>Due {formatDueDate(item.dueDate)}</span>
           </div>
         )}
+        <CustomFieldSummary
+          item={item}
+          definitions={customFieldDefinitions}
+          maxVisible={MAX_CUSTOM_FIELDS_LIST}
+          variant="list"
+        />
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-1">
             {sortedSubTasks.map((subTask) => (
@@ -160,12 +249,14 @@ const ListItemRow = memo(function ListItemRow({
 
 interface ListViewProps {
   items: Item[];
+  customFieldDefinitions: CustomFieldDefinition[];
   onOpenItem: (item: Item) => void;
   onRemoveItem: (id: string) => void;
 }
 
 const ListView = memo(function ListView({
   items,
+  customFieldDefinitions,
   onOpenItem,
   onRemoveItem,
 }: ListViewProps) {
@@ -175,6 +266,7 @@ const ListView = memo(function ListView({
         <ListItemRow
           key={item.id}
           item={item}
+          customFieldDefinitions={customFieldDefinitions}
           onOpen={onOpenItem}
           onRemove={onRemoveItem}
         />
@@ -185,6 +277,7 @@ const ListView = memo(function ListView({
 
 interface ColumnItemCardProps {
   item: Item;
+  customFieldDefinitions: CustomFieldDefinition[];
   onOpen: (item: Item) => void;
   onRemove: (id: string) => void;
   onDragStart: (event: React.DragEvent<HTMLDivElement>, itemId: string) => void;
@@ -193,6 +286,7 @@ interface ColumnItemCardProps {
 
 const ColumnItemCard = memo(function ColumnItemCard({
   item,
+  customFieldDefinitions,
   onOpen,
   onRemove,
   onDragStart,
@@ -248,6 +342,12 @@ const ColumnItemCard = memo(function ColumnItemCard({
             <span>Due {formatDueDate(item.dueDate)}</span>
           </div>
         )}
+        <CustomFieldSummary
+          item={item}
+          definitions={customFieldDefinitions}
+          maxVisible={MAX_CUSTOM_FIELDS_KANBAN}
+          variant="kanban"
+        />
         {item.subTasks.length > 0 && (
           <div className="flex flex-col gap-0.5">
             {sortedSubTasks.map((subTask) => (
@@ -288,6 +388,7 @@ const ColumnItemCard = memo(function ColumnItemCard({
 
 interface ColumnsViewProps {
   itemsByColumn: Record<ColumnId, Item[]>;
+  customFieldDefinitions: CustomFieldDefinition[];
   onOpenItem: (item: Item) => void;
   onRemoveItem: (id: string) => void;
   onDragStart: (event: React.DragEvent<HTMLDivElement>, itemId: string) => void;
@@ -298,6 +399,7 @@ interface ColumnsViewProps {
 
 const ColumnsView = memo(function ColumnsView({
   itemsByColumn,
+  customFieldDefinitions,
   onOpenItem,
   onRemoveItem,
   onDragStart,
@@ -310,7 +412,7 @@ const ColumnsView = memo(function ColumnsView({
       <p className="text-sm text-muted-foreground">
         Drag tasks between columns. The list view order stays the same.
       </p>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 lg:justify-items-center">
         {COLUMNS.map((column) => {
           const columnItems = itemsByColumn[column.id];
 
@@ -319,7 +421,7 @@ const ColumnsView = memo(function ColumnsView({
               key={column.id}
               onDragOver={onDragOver}
               onDrop={(event) => onDrop(event, column.id)}
-              className="flex min-h-[200px] flex-col gap-3 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3"
+              className="flex min-h-[200px] w-full flex-col gap-3 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 lg:max-w-[240px]"
             >
               <div className="text-base font-medium text-foreground">
                 {column.label}
@@ -334,6 +436,7 @@ const ColumnsView = memo(function ColumnsView({
                     <ColumnItemCard
                       key={item.id}
                       item={item}
+                      customFieldDefinitions={customFieldDefinitions}
                       onOpen={onOpenItem}
                       onRemove={onRemoveItem}
                       onDragStart={onDragStart}
@@ -676,6 +779,9 @@ export function ItemList() {
   const [subTaskInput, setSubTaskInput] = useState("");
   const [editingLink, setEditingLink] = useState("");
   const [editingDueDate, setEditingDueDate] = useState("");
+  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
+  const [customFieldsLoaded, setCustomFieldsLoaded] = useState(false);
+  const [editingCustomFields, setEditingCustomFields] = useState<Record<string, string>>({});
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingDocumentFromTask, setEditingDocumentFromTask] = useState<DocumentRecord | null>(null);
   const draggingItemRef = useRef<string | null>(null);
@@ -693,6 +799,64 @@ export function ItemList() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCustomFields = async () => {
+      try {
+        const storedFields = await getSetting<CustomFieldDefinition[]>("customFields");
+        if (!cancelled) {
+          setCustomFields(storedFields ?? []);
+          setCustomFieldsLoaded(true);
+        }
+      } catch (error) {
+        console.error("Failed to load custom fields:", error);
+      }
+    };
+
+    loadCustomFields();
+
+    const handleCustomFieldsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<CustomFieldDefinition[]>).detail;
+      if (!detail) return;
+      setCustomFields(detail);
+      setCustomFieldsLoaded(true);
+    };
+
+    window.addEventListener("custom-fields-updated", handleCustomFieldsUpdated as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("custom-fields-updated", handleCustomFieldsUpdated as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated || !customFieldsLoaded) return;
+    const allowedIds = new Set(customFields.map((field) => field.id));
+
+    setItems((prevItems) => {
+      let changed = false;
+      const nextItems = prevItems.map((item) => {
+        if (!item.customFields) return item;
+
+        const nextEntries = Object.entries(item.customFields).filter(([fieldId]) =>
+          allowedIds.has(fieldId),
+        );
+        const nextMap = nextEntries.length > 0 ? Object.fromEntries(nextEntries) : undefined;
+        const currentCount = Object.keys(item.customFields).length;
+
+        if (nextEntries.length !== currentCount) {
+          changed = true;
+          return { ...item, customFields: nextMap };
+        }
+
+        return item;
+      });
+
+      return changed ? nextItems : prevItems;
+    });
+  }, [customFields, customFieldsLoaded, isHydrated, setItems]);
+
   const closeEditor = useCallback(() => {
     setIsEditorOpen(false);
     draggingSubTaskRef.current = null;
@@ -707,6 +871,7 @@ export function ItemList() {
       setEditingLabel("");
       setEditingLink("");
       setEditingDueDate("");
+      setEditingCustomFields({});
       setSubTaskInput("");
       setIsEditMode(false);
       closeTimeoutRef.current = null;
@@ -728,6 +893,7 @@ export function ItemList() {
             setEditingLabel(item.label);
             setEditingLink(item.link ?? "");
             setEditingDueDate(item.dueDate ?? "");
+            setEditingCustomFields(item.customFields ?? {});
           }
         } else {
           closeEditor();
@@ -828,6 +994,7 @@ export function ItemList() {
     setEditingLabel(item.label);
     setEditingLink(item.link ?? "");
     setEditingDueDate(item.dueDate ?? "");
+    setEditingCustomFields(item.customFields ?? {});
     setIsEditorOpen(false);
     requestAnimationFrame(() => setIsEditorOpen(true));
   }, []);
@@ -839,15 +1006,27 @@ export function ItemList() {
 
     const nextLink = editingLink.trim() || undefined;
     const nextDueDate = editingDueDate.trim() || undefined;
+    const nextCustomFieldEntries = Object.entries(editingCustomFields)
+      .map(([fieldId, value]) => [fieldId, value.trim()])
+      .filter(([, value]) => value.length > 0);
+    const nextCustomFields = nextCustomFieldEntries.length > 0
+      ? Object.fromEntries(nextCustomFieldEntries)
+      : undefined;
     setItems((prevItems) =>
       prevItems.map((item) =>
         item.id === editingItemId
-          ? { ...item, label: nextLabel, link: nextLink, dueDate: nextDueDate }
+          ? {
+              ...item,
+              label: nextLabel,
+              link: nextLink,
+              dueDate: nextDueDate,
+              customFields: nextCustomFields,
+            }
           : item
       )
     );
     setIsEditMode(false);
-  }, [editingItemId, editingLabel, editingLink, editingDueDate, setItems]);
+  }, [editingItemId, editingLabel, editingLink, editingDueDate, editingCustomFields, setItems]);
 
   const cancelEditMode = useCallback(() => {
     // Reset to original values and exit edit mode
@@ -855,9 +1034,14 @@ export function ItemList() {
       setEditingLabel(editingItem.label);
       setEditingLink(editingItem.link ?? "");
       setEditingDueDate(editingItem.dueDate ?? "");
+      setEditingCustomFields(editingItem.customFields ?? {});
     }
     setIsEditMode(false);
   }, [editingItem]);
+
+  const handleCustomFieldChange = useCallback((fieldId: string, value: string) => {
+    setEditingCustomFields((prev) => ({ ...prev, [fieldId]: value }));
+  }, []);
 
   const addSubTask = useCallback(() => {
     const nextValue = subTaskInput.trim();
@@ -894,7 +1078,7 @@ export function ItemList() {
         // Check if any subtask is now completed
         const hasCompletedSubTask = updatedSubTasks.some((st) => st.completed);
 
-        // If any subtask is completed and task is in "Not started", move to "In progress"
+        // If any subtask is completed and task is in "To apply", move to "Applied"
         if (hasCompletedSubTask) {
           const currentColumn = columnById[item.id] ?? DEFAULT_COLUMN;
           if (currentColumn === "column-1") {
@@ -1060,6 +1244,7 @@ export function ItemList() {
       "column-1": [],
       "column-2": [],
       "column-3": [],
+      "column-4": [],
     };
 
     for (const item of items) {
@@ -1106,7 +1291,7 @@ export function ItemList() {
               className="justify-start"
             >
               <Columns3 className="mr-1.5 h-4 w-4" />
-              Columns
+              Kanban
             </Button>
             <Button
               type="button"
@@ -1164,12 +1349,14 @@ export function ItemList() {
           ) : viewMode === "list" ? (
             <ListView
               items={items}
+              customFieldDefinitions={customFields}
               onOpenItem={handleOpenItem}
               onRemoveItem={removeItem}
             />
           ) : (
             <ColumnsView
               itemsByColumn={itemsByColumn}
+              customFieldDefinitions={customFields}
               onOpenItem={handleOpenItem}
               onRemoveItem={removeItem}
               onDragStart={handleDragStart}
@@ -1331,6 +1518,73 @@ export function ItemList() {
                       )}
                     </div>
                   </div>
+
+                  {customFields.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                        Custom fields
+                      </label>
+                      <div className="space-y-3">
+                        {customFields.map((field) => (
+                          <div key={field.id} className="space-y-1.5">
+                            <label
+                              htmlFor={`custom-field-${field.id}`}
+                              className="text-sm text-muted-foreground"
+                            >
+                              {field.label}
+                            </label>
+                            {field.type === "select" ? (
+                              <Select
+                                value={
+                                  editingCustomFields[field.id]?.trim()
+                                    ? editingCustomFields[field.id]
+                                    : EMPTY_SELECT_VALUE
+                                }
+                                onValueChange={(value) =>
+                                  handleCustomFieldChange(
+                                    field.id,
+                                    value === EMPTY_SELECT_VALUE ? "" : value
+                                  )
+                                }
+                                disabled={!field.options?.length}
+                              >
+                                <SelectTrigger id={`custom-field-${field.id}`}>
+                                  <SelectValue
+                                    placeholder={
+                                      field.options?.length
+                                        ? "Select an option..."
+                                        : "No options yet"
+                                    }
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={EMPTY_SELECT_VALUE}>
+                                    {field.options?.length
+                                      ? "Select an option..."
+                                      : "No options yet"}
+                                  </SelectItem>
+                                  {field.options?.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input
+                                id={`custom-field-${field.id}`}
+                                value={editingCustomFields[field.id] ?? ""}
+                                onChange={(event) =>
+                                  handleCustomFieldChange(field.id, event.target.value)
+                                }
+                                placeholder={field.label}
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Sub-tasks section */}
                   <div className="flex-1 space-y-3">
@@ -1510,6 +1764,32 @@ export function ItemList() {
                       </p>
                     )}
                   </div>
+
+                  {customFields.length > 0 && (
+                    <div className="space-y-3">
+                      <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                        Custom fields
+                      </span>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {customFields.map((field) => {
+                          const value = editingItem?.customFields?.[field.id];
+                          return (
+                            <div
+                              key={field.id}
+                              className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                {field.label}
+                              </p>
+                              <p className="mt-1 text-base text-foreground">
+                                {value && value.trim() ? value : "Not set"}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Sub-tasks section */}
                   <div className="space-y-3">

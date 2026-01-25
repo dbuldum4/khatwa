@@ -5,6 +5,7 @@ import {
   getSetting,
   type TaskRecord,
   type DocumentRecord,
+  type CustomFieldDefinition,
 } from './db';
 
 // Export format version - increment when format changes
@@ -18,7 +19,8 @@ export interface KhatwaExportData {
   documents: DocumentRecord[];
   settings: {
     columnById: Record<string, string>;
-    viewMode: 'list' | 'columns' | 'documents';
+    viewMode: 'list' | 'columns' | 'documents' | 'calendar';
+    customFields?: CustomFieldDefinition[];
   };
 }
 
@@ -32,11 +34,12 @@ export interface ValidationResult {
  * Export all app data as a pretty-printed JSON string
  */
 export async function exportAllData(): Promise<string> {
-  const [tasks, documents, columnById, viewMode] = await Promise.all([
+  const [tasks, documents, columnById, viewMode, customFields] = await Promise.all([
     getAllTasks(),
     getAllDocuments(),
     getSetting<Record<string, string>>('columnById'),
-    getSetting<'list' | 'columns' | 'documents'>('viewMode'),
+    getSetting<'list' | 'columns' | 'documents' | 'calendar'>('viewMode'),
+    getSetting<CustomFieldDefinition[]>('customFields'),
   ]);
 
   const exportData: KhatwaExportData = {
@@ -47,6 +50,7 @@ export async function exportAllData(): Promise<string> {
     settings: {
       columnById: columnById ?? {},
       viewMode: viewMode ?? 'list',
+      customFields: customFields ?? [],
     },
   };
 
@@ -158,9 +162,31 @@ export function validateImportData(data: unknown): ValidationResult {
     return { valid: false, error: 'Missing or invalid settings.columnById' };
   }
 
-  const validViewModes = ['list', 'columns', 'documents'];
+  const validViewModes = ['list', 'columns', 'documents', 'calendar'];
   if (!validViewModes.includes(settings.viewMode as string)) {
     return { valid: false, error: 'Invalid settings.viewMode' };
+  }
+
+  if ('customFields' in settings && settings.customFields !== undefined) {
+    if (!Array.isArray(settings.customFields)) {
+      return { valid: false, error: 'Invalid settings.customFields' };
+    }
+
+    for (const field of settings.customFields) {
+      if (!field || typeof field !== 'object') {
+        return { valid: false, error: 'Invalid custom field entry' };
+      }
+      const f = field as Record<string, unknown>;
+      if (typeof f.id !== 'string' || typeof f.label !== 'string' || typeof f.type !== 'string') {
+        return { valid: false, error: 'Custom field missing required fields (id, label, type)' };
+      }
+      if (f.type !== 'text' && f.type !== 'select') {
+        return { valid: false, error: 'Custom field type must be text or select' };
+      }
+      if ('options' in f && f.options !== undefined && !Array.isArray(f.options)) {
+        return { valid: false, error: 'Custom field options must be an array if provided' };
+      }
+    }
   }
 
   return { valid: true };
@@ -216,6 +242,7 @@ export async function importAllData(data: KhatwaExportData): Promise<void> {
     // Import settings
     await db.settings.put({ key: 'columnById', value: data.settings.columnById });
     await db.settings.put({ key: 'viewMode', value: data.settings.viewMode });
+    await db.settings.put({ key: 'customFields', value: data.settings.customFields ?? [] });
   });
 }
 
