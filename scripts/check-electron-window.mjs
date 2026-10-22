@@ -1,8 +1,8 @@
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { app } = require('electron');
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { app } from 'electron';
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'khatwa-runtime-'));
 app.setPath('userData', profile);
@@ -28,4 +28,4 @@ app.on('web-contents-created', (_event, contents) => {
     } catch (error) { console.error(error); app.exit(1); }
   });
 });
-require('../dist-electron/main.js');
+await import('../dist-electron/main.js');
