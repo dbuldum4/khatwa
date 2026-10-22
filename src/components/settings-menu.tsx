@@ -72,18 +72,23 @@ export function SettingsMenu({ onDataImported }: SettingsMenuProps) {
     setCustomFieldError(null);
   }, []);
 
-  const loadCustomFields = useCallback(async () => {
-    try {
-      const storedFields = await getSetting<CustomFieldDefinition[]>("customFields");
-      setCustomFields(storedFields ?? []);
-    } catch (err) {
-      console.error("Failed to load custom fields:", err);
-    }
-  }, []);
-
   useEffect(() => {
-    loadCustomFields();
-  }, [loadCustomFields]);
+    let cancelled = false;
+
+    async function loadCustomFields() {
+      try {
+        const storedFields = await getSetting<CustomFieldDefinition[]>("customFields");
+        if (!cancelled) setCustomFields(storedFields ?? []);
+      } catch (err) {
+        console.error("Failed to load custom fields:", err);
+      }
+    }
+
+    void loadCustomFields();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Close menu on Escape
   useEffect(() => {
