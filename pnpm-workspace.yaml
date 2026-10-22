@@ -6,3 +6,5 @@ allowBuilds:
   esbuild: false
   sharp: false
   unrs-resolver: false
+minimumReleaseAgeExclude:
+  - electron@43.8.3

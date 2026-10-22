@@ -45,3 +45,13 @@ jobs:
           NETLIFY: "true"
       - name: Build Electron static export and main process
         run: pnpm run build:electron
+      - name: Download pinned Electron runtime for verification
+        run: node node_modules/electron/install.js
+      - name: Verify actual pinned Electron runtime
+        run: node scripts/check-electron-runtime.mjs
+      - name: Verify sandboxed desktop window
+        run: |
+          electron_runtime_dir=$(dirname "$(node -p 'require("electron")')")
+          sudo chown root:root "$electron_runtime_dir/chrome-sandbox"
+          sudo chmod 4755 "$electron_runtime_dir/chrome-sandbox"
+          xvfb-run -a pnpm exec electron scripts/check-electron-window.mjs
