@@ -21,6 +21,17 @@ if (!process.versions.electron) {
   if (pkg.build?.electronVersion) {
     assert.equal(process.versions.electron, pkg.build.electronVersion);
   }
+  // A Brotli round-trip is only a smoke test: it passes on runtimes that are still
+  // exposed to CVE-2026-111497. Exposure is decided by the embedded Node version,
+  // which Node fixed in 22.23.4, 24.22.1 and 26.12.1 on 2026-10-21.
+  const patchedNode = { 22: [23, 4], 24: [22, 1], 26: [12, 1] };
+  const [major, minor, patch] = process.versions.node.split('.').map(Number);
+  const floor = patchedNode[major];
+  const nodeHasOctoberFixes = Boolean(floor) && (minor > floor[0] || (minor === floor[0] && patch >= floor[1]));
+  if (!nodeHasOctoberFixes) {
+    // Warn instead of failing: no Electron release ships a patched Node yet.
+    console.log(`::warning::Electron ${process.versions.electron} embeds Node ${process.versions.node}, which predates the 2026-10-21 Node security release (Brotli CVE-2026-111497, TLS hostname checks). Upgrade Electron once a release embeds Node 24.22.1 or later.`);
+  }
   const input = Buffer.from(Array.from({ length: 131072 }, (_, i) => i % 251));
   assert.deepEqual(zlib.brotliDecompressSync(zlib.brotliCompressSync(input)), input);
   assert.throws(() => zlib.brotliDecompressSync(Buffer.from([255])));
@@ -32,7 +43,8 @@ if (!process.versions.electron) {
     electron: process.versions.electron,
     node: process.versions.node,
     chrome: process.versions.chrome,
-    brotli: 'valid roundtrip and malformed input rejected',
-    tls: 'canonical DNS/IP checks passed',
+    nodeHasOctoberFixes,
+    brotli: 'smoke test passed (does not detect CVE-2026-111497)',
+    tls: 'basic DNS/IP identity checks passed (does not detect the October bypasses)',
   }));
 }
