@@ -1,6 +1,8 @@
 packages:
   - .
-ignoredBuiltDependencies:
-  - electron
-  - sharp
-  - unrs-resolver
+allowBuilds:
+  electron: false
+  electron-winstaller: false
+  esbuild: false
+  sharp: false
+  unrs-resolver: false
